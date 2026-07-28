@@ -58,6 +58,7 @@
         let selectedFile = null;
         let isTimeEnabled = false;
         
+        // Defaulting these, but the logic below now allows for broader discovery
         const SERVICE_UUID = '000018f0-0000-1000-8000-00805f9b34fb';
         const CHARACTERISTIC_UUID = '00002af1-0000-1000-8000-00805f9b34fb';
 
@@ -72,17 +73,30 @@
         const imgPreview = document.getElementById('imgPreview');
         const clearImage = document.getElementById('clearImage');
 
-        timeToggle.addEventListener('click', () => {
-            isTimeEnabled = !isTimeEnabled;
-            timeToggle.classList.toggle('bg-blue-50', isTimeEnabled);
-            timeToggle.classList.toggle('border-blue-500', isTimeEnabled);
-        });
+        connectBtn.addEventListener('click', async () => {
+            try {
+                // Requesting all devices to bypass UUID filtering
+                const device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: [SERVICE_UUID, '000018f0-0000-1000-8000-00805f9b34fb', '0000ffe0-0000-1000-8000-00805f9b34fb'] 
+                });
 
-        imageInput.addEventListener('change', (e) => {
-            if (e.target.files && e.target.files[0]) {
-                selectedFile = e.target.files[0];
-                imgPreview.src = URL.createObjectURL(selectedFile);
-                previewContainer.classList.remove('hidden');
+                const server = await device.gatt.connect();
+                
+                // Attempting to find the service. If the printer uses a different UUID, 
+                // you may see an error here. You can inspect device.gatt.getPrimaryServices() 
+                // in your browser console to find the correct one if this fails.
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+                
+                statusText.textContent = 'Printer Ready';
+                statusText.className = 'text-xs font-bold text-green-600 uppercase tracking-widest';
+                connectBtn.textContent = 'Printer Connected';
+                connectBtn.classList.replace('bg-slate-900', 'bg-green-600');
+                printBtn.disabled = false;
+            } catch (err) {
+                console.error(err);
+                statusText.textContent = 'Connection Failed: ' + err.message;
             }
         });
 
