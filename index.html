@@ -3,16 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YHK Final Protocol Tool</title>
+    <title>YHK Image Printer</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-50 p-6 flex items-center justify-center min-h-screen">
-    <div class="max-w-sm w-full bg-white p-8 rounded-3xl shadow-xl border border-slate-200">
-        <h1 class="text-xl font-bold mb-4">Final Protocol Tool</h1>
-        <button id="connectBtn" class="w-full bg-blue-600 text-white py-4 rounded-xl font-bold mb-4">1. Connect</button>
-        <textarea id="text" class="w-full border border-slate-300 p-4 rounded-xl h-24 mb-4" placeholder="Type something..."></textarea>
-        <button id="printBtn" class="w-full bg-green-600 text-white py-4 rounded-xl font-bold">2. Print Bitmap</button>
-        <div id="status" class="mt-4 text-xs text-slate-400 italic">Status: Waiting...</div>
+    <div class="max-w-md w-full bg-white p-8 rounded-3xl shadow-xl border border-slate-200">
+        <h1 class="text-2xl font-bold mb-6 text-slate-800">YHK Printer Controller</h1>
+        
+        <button id="connectBtn" class="w-full bg-blue-600 text-white py-4 rounded-xl font-bold mb-4 shadow-lg hover:bg-blue-700 transition-all">1. Connect Printer</button>
+        
+        <div class="mb-4">
+            <label class="block text-sm font-medium text-slate-600 mb-2">Select Image to Print:</label>
+            <input type="file" id="imageInput" accept="image/*" class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+        </div>
+
+        <button id="printBtn" class="w-full bg-green-600 text-white py-4 rounded-xl font-bold mb-6 hover:bg-green-700 transition-all disabled:bg-slate-300" disabled>2. Print Image</button>
+        
+        <div id="status" class="p-4 bg-slate-100 rounded-xl text-xs text-slate-600 font-mono italic min-h-[4rem]">
+            Status: Waiting for connection...
+        </div>
     </div>
 
     <canvas id="canvas" class="hidden"></canvas>
@@ -22,51 +31,70 @@
         const SERVICE_UUID = '49535343-fe7d-4ae5-8fa9-9fafd205e455';
         const CHAR_UUID = '49535343-8841-43f4-a8d4-ecbe34729bb3';
 
-        document.getElementById('connectBtn').onclick = async () => {
-            const status = document.getElementById('status');
+        const status = document.getElementById('status');
+        const connectBtn = document.getElementById('connectBtn');
+        const printBtn = document.getElementById('printBtn');
+
+        function updateStatus(msg) { status.textContent = "Status: " + msg; }
+
+        connectBtn.onclick = async () => {
             try {
+                updateStatus("Requesting device...");
                 const device = await navigator.bluetooth.requestDevice({
                     filters: [{namePrefix: 'YHK'}],
                     optionalServices: [SERVICE_UUID]
                 });
+                updateStatus("Connecting to GATT...");
                 const server = await device.gatt.connect();
                 const service = await server.getPrimaryService(SERVICE_UUID);
                 characteristic = await service.getCharacteristic(CHAR_UUID);
-                status.textContent = "Status: Connected!";
-            } catch (e) { status.textContent = "Err: " + e.message; }
+                updateStatus("Connected! Ready to print.");
+                printBtn.disabled = false;
+            } catch (e) { updateStatus("Error: " + e.message); }
         };
 
-        document.getElementById('printBtn').onclick = async () => {
+        printBtn.onclick = async () => {
+            const fileInput = document.getElementById('imageInput');
+            if (!fileInput.files[0]) { updateStatus("Please select an image first!"); return; }
+
+            updateStatus("Processing image...");
+            const img = new Image();
+            img.src = URL.createObjectURL(fileInput.files[0]);
+            await img.decode();
+
             const canvas = document.getElementById('canvas');
             const ctx = canvas.getContext('2d');
-            canvas.width = 384; canvas.height = 48; // Standard 384px width
-            ctx.fillStyle = 'white'; ctx.fillRect(0, 0, 384, 48);
-            ctx.fillStyle = 'black'; ctx.font = '24px monospace';
-            ctx.fillText(document.getElementById('text').value, 10, 30);
-
-            const img = ctx.getImageData(0, 0, 384, 48);
-            const bytesPerLine = 384 / 8;
-            const bitmap = new Uint8Array(bytesPerLine * 48);
+            canvas.width = 384; 
+            canvas.height = Math.floor(img.height * (384 / img.width));
             
-            for (let y = 0; y < 48; y++) {
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+            const imageData = ctx.getImageData(0, 0, 384, canvas.height);
+            const bytesPerLine = 48;
+            const bitmap = new Uint8Array(bytesPerLine * canvas.height);
+
+            for (let y = 0; y < canvas.height; y++) {
                 for (let x = 0; x < 384; x++) {
-                    if (img.data[(y * 384 + x) * 4] < 128) {
+                    const i = (y * 384 + x) * 4;
+                    const brightness = (imageData.data[i] + imageData.data[i+1] + imageData.data[i+2]) / 3;
+                    if (brightness < 128) {
                         bitmap[y * bytesPerLine + Math.floor(x / 8)] |= (1 << (7 - (x % 8)));
                     }
                 }
             }
 
-            // Proprietary YHK Header (10 bytes: Start markers, length, etc.)
-            const header = new Uint8Array([0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
-            const finalBuffer = new Uint8Array(header.length + bitmap.length);
-            finalBuffer.set(header);
-            finalBuffer.set(bitmap, header.length);
+            const header = new Uint8Array([0x1D, 0x76, 0x30, 0x00, 48, 0x00, canvas.height & 0xFF, (canvas.height >> 8) & 0xFF]);
+            const finalBuffer = new Uint8Array([...header, ...bitmap, 0x0A, 0x0A, 0x0A]);
 
-            // Send in 20-byte BLE chunks
+            updateStatus("Sending to printer...");
             for (let i = 0; i < finalBuffer.length; i += 20) {
-                await characteristic.writeValue(finalBuffer.slice(i, Math.min(i + 20, finalBuffer.length)));
+                await characteristic.writeValue(finalBuffer.slice(i, i + 20));
+                await new Promise(r => setTimeout(r, 30));
+                updateStatus(`Streaming: ${Math.floor((i/finalBuffer.length)*100)}%`);
             }
-            document.getElementById('status').textContent = "Status: Sent!";
+            updateStatus("Done! Check your printer.");
         };
     </script>
 </body>
