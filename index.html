@@ -17,6 +17,11 @@
             <input type="file" id="imageInput" accept="image/*" class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
         </div>
 
+        <div class="mb-6">
+            <label class="block text-sm font-medium text-slate-600 mb-2">Threshold (Darkness): <span id="threshVal">128</span></label>
+            <input type="range" id="thresholdSlider" min="0" max="255" value="128" class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600">
+        </div>
+
         <button id="printBtn" class="w-full bg-green-600 text-white py-4 rounded-xl font-bold mb-6 hover:bg-green-700 transition-all disabled:bg-slate-300" disabled>2. Print Image</button>
         
         <div id="status" class="p-4 bg-slate-100 rounded-xl text-xs text-slate-600 font-mono italic min-h-[4rem]">
@@ -34,7 +39,10 @@
         const status = document.getElementById('status');
         const connectBtn = document.getElementById('connectBtn');
         const printBtn = document.getElementById('printBtn');
+        const thresholdSlider = document.getElementById('thresholdSlider');
+        const threshVal = document.getElementById('threshVal');
 
+        thresholdSlider.oninput = () => threshVal.textContent = thresholdSlider.value;
         function updateStatus(msg) { status.textContent = "Status: " + msg; }
 
         connectBtn.onclick = async () => {
@@ -74,12 +82,13 @@
             const imageData = ctx.getImageData(0, 0, 384, canvas.height);
             const bytesPerLine = 48;
             const bitmap = new Uint8Array(bytesPerLine * canvas.height);
+            const threshold = parseInt(thresholdSlider.value);
 
             for (let y = 0; y < canvas.height; y++) {
                 for (let x = 0; x < 384; x++) {
                     const i = (y * 384 + x) * 4;
                     const brightness = (imageData.data[i] + imageData.data[i+1] + imageData.data[i+2]) / 3;
-                    if (brightness < 128) {
+                    if (brightness < threshold) {
                         bitmap[y * bytesPerLine + Math.floor(x / 8)] |= (1 << (7 - (x % 8)));
                     }
                 }
@@ -91,7 +100,8 @@
             updateStatus("Sending to printer...");
             for (let i = 0; i < finalBuffer.length; i += 20) {
                 await characteristic.writeValue(finalBuffer.slice(i, i + 20));
-                await new Promise(r => setTimeout(r, 30));
+                // Reduced delay from 30ms to 15ms for faster throughput
+                await new Promise(r => setTimeout(r, 15));
                 updateStatus(`Streaming: ${Math.floor((i/finalBuffer.length)*100)}%`);
             }
             updateStatus("Done! Check your printer.");
