@@ -2,61 +2,71 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>YHK-1DBD Raw Bitmap Streamer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YHK Final Protocol Tool</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-100 p-4">
-    <div class="max-w-sm mx-auto bg-white p-6 rounded-xl shadow-md">
-        <h1 class="text-lg font-bold mb-4">Direct Image Printer</h1>
-        <button id="connect" class="w-full bg-blue-500 text-white py-2 rounded mb-4">Connect Printer</button>
-        <textarea id="text" class="w-full border p-2 h-24 mb-4" placeholder="Enter text to image..."></textarea>
-        <button id="print" class="w-full bg-green-600 text-white py-2 rounded">Stream Bitmap Data</button>
+<body class="bg-slate-50 p-6 flex items-center justify-center min-h-screen">
+    <div class="max-w-sm w-full bg-white p-8 rounded-3xl shadow-xl border border-slate-200">
+        <h1 class="text-xl font-bold mb-4">Final Protocol Tool</h1>
+        <button id="connectBtn" class="w-full bg-blue-600 text-white py-4 rounded-xl font-bold mb-4">1. Connect</button>
+        <textarea id="text" class="w-full border border-slate-300 p-4 rounded-xl h-24 mb-4" placeholder="Type something..."></textarea>
+        <button id="printBtn" class="w-full bg-green-600 text-white py-4 rounded-xl font-bold">2. Print Bitmap</button>
+        <div id="status" class="mt-4 text-xs text-slate-400 italic">Status: Waiting...</div>
     </div>
 
     <canvas id="canvas" class="hidden"></canvas>
 
     <script>
         let characteristic;
-        // Your confirmed Service and Characteristic
         const SERVICE_UUID = '49535343-fe7d-4ae5-8fa9-9fafd205e455';
         const CHAR_UUID = '49535343-8841-43f4-a8d4-ecbe34729bb3';
 
-        document.getElementById('connect').onclick = async () => {
-            const device = await navigator.bluetooth.requestDevice({
-                filters: [{name: 'YHK-1DBD'}],
-                optionalServices: [SERVICE_UUID]
-            });
-            const server = await device.gatt.connect();
-            const service = await server.getPrimaryService(SERVICE_UUID);
-            characteristic = await service.getCharacteristic(CHAR_UUID);
-            alert("Connected!");
+        document.getElementById('connectBtn').onclick = async () => {
+            const status = document.getElementById('status');
+            try {
+                const device = await navigator.bluetooth.requestDevice({
+                    filters: [{namePrefix: 'YHK'}],
+                    optionalServices: [SERVICE_UUID]
+                });
+                const server = await device.gatt.connect();
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                characteristic = await service.getCharacteristic(CHAR_UUID);
+                status.textContent = "Status: Connected!";
+            } catch (e) { status.textContent = "Err: " + e.message; }
         };
 
-        document.getElementById('print').onclick = async () => {
+        document.getElementById('printBtn').onclick = async () => {
             const canvas = document.getElementById('canvas');
             const ctx = canvas.getContext('2d');
-            canvas.width = 384; canvas.height = 100;
-            ctx.fillStyle = 'white'; ctx.fillRect(0,0,384,100);
-            ctx.fillStyle = 'black'; ctx.font = '30px Arial';
-            ctx.fillText(document.getElementById('text').value, 10, 50);
+            canvas.width = 384; canvas.height = 48; // Standard 384px width
+            ctx.fillStyle = 'white'; ctx.fillRect(0, 0, 384, 48);
+            ctx.fillStyle = 'black'; ctx.font = '24px monospace';
+            ctx.fillText(document.getElementById('text').value, 10, 30);
 
-            const img = ctx.getImageData(0,0,384,100);
-            const data = new Uint8Array(384 * 100 / 8);
-            for(let i=0; i<img.data.length; i+=4) {
-                if(img.data[i] < 128) {
-                    let byteIndex = Math.floor(i / 32);
-                    let bitIndex = 7 - Math.floor((i/4) % 8);
-                    data[byteIndex] |= (1 << bitIndex);
+            const img = ctx.getImageData(0, 0, 384, 48);
+            const bytesPerLine = 384 / 8;
+            const bitmap = new Uint8Array(bytesPerLine * 48);
+            
+            for (let y = 0; y < 48; y++) {
+                for (let x = 0; x < 384; x++) {
+                    if (img.data[(y * 384 + x) * 4] < 128) {
+                        bitmap[y * bytesPerLine + Math.floor(x / 8)] |= (1 << (7 - (x % 8)));
+                    }
                 }
             }
-            
-            // The magic proprietary YHK packet header
-            const header = new Uint8Array([0x02, 0x00, 0x30, 0x00]); 
-            const packet = new Uint8Array([...header, ...data, 0x0A, 0x0A]);
 
-            for(let i=0; i<packet.length; i+=20) {
-                await characteristic.writeValue(packet.slice(i, i+20));
+            // Proprietary YHK Header (10 bytes: Start markers, length, etc.)
+            const header = new Uint8Array([0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+            const finalBuffer = new Uint8Array(header.length + bitmap.length);
+            finalBuffer.set(header);
+            finalBuffer.set(bitmap, header.length);
+
+            // Send in 20-byte BLE chunks
+            for (let i = 0; i < finalBuffer.length; i += 20) {
+                await characteristic.writeValue(finalBuffer.slice(i, Math.min(i + 20, finalBuffer.length)));
             }
+            document.getElementById('status').textContent = "Status: Sent!";
         };
     </script>
 </body>
