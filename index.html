@@ -3,78 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Thermal Printer Interface</title>
+    <title>Raw Bluetooth Scanner</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-50 p-6 min-h-screen">
-    <div class="max-w-md mx-auto bg-white p-8 rounded-3xl shadow-sm border border-slate-200">
-        <h1 class="text-2xl font-bold text-slate-900 mb-2">Printer Interface</h1>
-        <p id="status" class="text-slate-500 mb-6 text-sm font-medium">Disconnected</p>
-        
-        <button id="connectBtn" class="w-full bg-slate-900 text-white font-bold py-4 rounded-2xl shadow-lg active:scale-[0.98] transition-all">
-            Connect Printer
+<body class="bg-slate-50 p-6 flex items-center justify-center min-h-screen">
+    <div class="max-w-sm w-full bg-white p-8 rounded-3xl shadow-lg border border-slate-200">
+        <h1 class="text-xl font-bold mb-4">Raw Device Scanner</h1>
+        <button id="scanBtn" class="w-full bg-blue-600 text-white py-4 rounded-xl font-bold">
+            Scan for Devices
         </button>
-
-        <textarea id="printText" class="w-full mt-6 p-4 border border-slate-200 rounded-2xl h-32 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Enter text to print..."></textarea>
-
-        <button id="printBtn" disabled class="w-full mt-4 bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg opacity-50 active:scale-[0.98] transition-all disabled:opacity-30">
-            Print Now
-        </button>
+        <div id="log" class="mt-4 text-xs text-slate-500 italic"></div>
     </div>
 
     <script>
-        let characteristic;
-        const SERVICE_UUID = '49535343-FE7D-4AE5-8FA9-9FAFD205E455';
-        const CHARACTERISTIC_UUID = '49535343-8841-43F4-A8D4-ECBE34729BB3';
-
-        const connectBtn = document.getElementById('connectBtn');
-        const printBtn = document.getElementById('printBtn');
-        const statusText = document.getElementById('status');
-        const printText = document.getElementById('printText');
-
-        connectBtn.addEventListener('click', async () => {
+        document.getElementById('scanBtn').addEventListener('click', async () => {
+            const log = document.getElementById('log');
+            log.textContent = "Opening device picker...";
             try {
+                // Scanning for all devices, no filters
                 const device = await navigator.bluetooth.requestDevice({
-                    filters: [{ services: [SERVICE_UUID] }],
-                    optionalServices: [SERVICE_UUID]
+                    acceptAllDevices: true,
+                    optionalServices: ['49535343-fe7d-4ae5-8fa9-9fafd205e455']
                 });
-
-                const server = await device.gatt.connect();
-                const service = await server.getPrimaryService(SERVICE_UUID);
-                characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
-                
-                statusText.textContent = 'Printer Connected';
-                statusText.className = 'text-green-600 font-bold';
-                connectBtn.textContent = 'Connected';
-                connectBtn.disabled = true;
-                printBtn.disabled = false;
-                printBtn.classList.replace('opacity-50', 'opacity-100');
+                log.textContent = "Selected: " + device.name;
             } catch (err) {
-                statusText.textContent = 'Error: ' + err.message;
-            }
-        });
-
-        printBtn.addEventListener('click', async () => {
-            if (!characteristic) return;
-            
-            const encoder = new TextEncoder();
-            const text = printText.value + "\n\n\n";
-            const textData = encoder.encode(text);
-            
-            // Construct YHK specific packet header
-            const packet = new Uint8Array(textData.length + 2);
-            packet[0] = 0x02; 
-            packet[1] = 0x00;
-            packet.set(textData, 2);
-            
-            try {
-                // Send in small chunks to accommodate BLE MTU
-                for (let i = 0; i < packet.length; i += 20) {
-                    const chunk = packet.slice(i, i + 20);
-                    await characteristic.writeValue(chunk);
-                }
-            } catch (err) {
-                console.error("Print Error:", err);
+                log.textContent = "Error: " + err.message;
             }
         });
     </script>
