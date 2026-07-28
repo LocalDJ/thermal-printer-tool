@@ -3,45 +3,53 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bluetooth Scanner</title>
+    <title>Printer Diagnostic Tool</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-50 p-6 min-h-screen">
-    <div class="max-w-md mx-auto bg-white p-8 rounded-3xl shadow-sm border border-slate-200">
-        <h1 class="text-2xl font-bold text-slate-900 mb-2">Scanner Tool</h1>
-        <p class="text-slate-500 mb-6">This tool scans for all nearby Bluetooth devices to verify browser visibility.</p>
+    <div class="max-w-lg mx-auto bg-white p-8 rounded-3xl shadow-sm border border-slate-200">
+        <h1 class="text-2xl font-bold text-slate-900 mb-2">Printer Diagnostic</h1>
+        <p class="text-slate-500 mb-6">Connecting and sniffing for writable characteristics...</p>
         
         <button id="scanBtn" class="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg active:scale-[0.98] transition-all">
-            Scan for Devices
+            Connect & Discover
         </button>
 
-        <div id="results" class="mt-8 space-y-3">
-            <!-- Results will appear here -->
+        <div id="results" class="mt-8 space-y-3 font-mono text-xs">
+            <!-- Data will appear here -->
         </div>
     </div>
 
     <script>
-        const scanBtn = document.getElementById('scanBtn');
         const results = document.getElementById('results');
-
-        scanBtn.addEventListener('click', async () => {
+        document.getElementById('scanBtn').addEventListener('click', async () => {
             results.innerHTML = '<p class="text-slate-400 italic">Scanning...</p>';
             try {
-                // Requesting ALL devices with no filters.
-                // This is the "widest" possible search for Web Bluetooth.
+                // Connect without filters to find everything
                 const device = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true
+                    acceptAllDevices: true,
+                    optionalServices: [] // We will discover these dynamically
                 });
 
-                results.innerHTML = `
-                    <div class="p-4 bg-green-50 border border-green-200 rounded-2xl">
-                        <p class="text-green-800 font-bold">Device Found!</p>
-                        <p class="text-green-600 font-mono text-sm">${device.name || 'Unnamed Device'}</p>
-                        <p class="text-green-500 text-xs">ID: ${device.id}</p>
-                    </div>
-                `;
+                const server = await device.gatt.connect();
+                results.innerHTML = `<p class="text-blue-600">Connected to ${device.name}. Fetching services...</p>`;
+
+                // Get all services
+                const services = await server.getPrimaryServices();
+                for (const service of services) {
+                    results.innerHTML += `<div class="mt-4 p-2 bg-slate-100 rounded">Service: ${service.uuid}</div>`;
+                    
+                    const characteristics = await service.getCharacteristics();
+                    for (const char of characteristics) {
+                        results.innerHTML += `
+                            <div class="ml-4 p-1 border-l-2 border-blue-200">
+                                Characteristic: ${char.uuid} 
+                                <br>
+                                <span class="text-green-600 font-bold">Properties: ${Object.keys(char.properties).filter(p => char.properties[p]).join(', ')}</span>
+                            </div>`;
+                    }
+                }
             } catch (err) {
-                console.error(err);
                 results.innerHTML = `<p class="text-red-500 font-medium">Error: ${err.message}</p>`;
             }
         });
