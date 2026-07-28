@@ -3,23 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YHK Image Printer</title>
+    <title>YHK Thermal Printer Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-50 p-6 flex items-center justify-center min-h-screen">
     <div class="max-w-md w-full bg-white p-8 rounded-3xl shadow-xl border border-slate-200">
-        <h1 class="text-2xl font-bold mb-6 text-slate-800">YHK Printer Controller</h1>
+        <h1 class="text-2xl font-bold mb-6 text-slate-800">YHK Pro Controller</h1>
         
         <button id="connectBtn" class="w-full bg-blue-600 text-white py-4 rounded-xl font-bold mb-4 shadow-lg hover:bg-blue-700 transition-all">1. Connect Printer</button>
         
         <div class="mb-4">
-            <label class="block text-sm font-medium text-slate-600 mb-2">Select Image to Print:</label>
-            <input type="file" id="imageInput" accept="image/*" class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+            <input type="file" id="imageInput" accept="image/*" class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
         </div>
 
         <div class="mb-6">
-            <label class="block text-sm font-medium text-slate-600 mb-2">Threshold (Darkness): <span id="threshVal">128</span></label>
+            <label class="block text-sm font-medium text-slate-600 mb-2">Darkness Threshold: <span id="threshVal">128</span></label>
             <input type="range" id="thresholdSlider" min="0" max="255" value="128" class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600">
+        </div>
+
+        <div class="mb-6">
+            <p class="text-xs font-bold text-slate-400 uppercase mb-2">Live Preview</p>
+            <div id="previewContainer" class="w-full bg-slate-100 rounded-xl overflow-hidden border border-slate-200 flex justify-center p-2">
+                <canvas id="previewCanvas" class="max-w-full h-auto"></canvas>
+            </div>
         </div>
 
         <button id="printBtn" class="w-full bg-green-600 text-white py-4 rounded-xl font-bold mb-6 hover:bg-green-700 transition-all disabled:bg-slate-300" disabled>2. Print Image</button>
@@ -41,8 +47,43 @@
         const printBtn = document.getElementById('printBtn');
         const thresholdSlider = document.getElementById('thresholdSlider');
         const threshVal = document.getElementById('threshVal');
+        const previewCanvas = document.getElementById('previewCanvas');
+        const imageInput = document.getElementById('imageInput');
 
-        thresholdSlider.oninput = () => threshVal.textContent = thresholdSlider.value;
+        let sourceImage = null;
+
+        const updatePreview = () => {
+            if (!sourceImage) return;
+            const ctx = previewCanvas.getContext('2d');
+            previewCanvas.width = 150;
+            previewCanvas.height = Math.floor(sourceImage.height * (150 / sourceImage.width));
+            ctx.drawImage(sourceImage, 0, 0, previewCanvas.width, previewCanvas.height);
+            
+            const imageData = ctx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+            const threshold = parseInt(thresholdSlider.value);
+            for (let i = 0; i < imageData.data.length; i += 4) {
+                const avg = (imageData.data[i] + imageData.data[i+1] + imageData.data[i+2]) / 3;
+                const val = avg < threshold ? 0 : 255;
+                imageData.data[i] = imageData.data[i+1] = imageData.data[i+2] = val;
+            }
+            ctx.putImageData(imageData, 0, 0);
+        };
+
+        imageInput.onchange = (e) => {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                sourceImage = new Image();
+                sourceImage.onload = updatePreview;
+                sourceImage.src = event.target.result;
+            };
+            reader.readAsDataURL(e.target.files[0]);
+        };
+
+        thresholdSlider.oninput = () => {
+            threshVal.textContent = thresholdSlider.value;
+            updatePreview();
+        };
+
         function updateStatus(msg) { status.textContent = "Status: " + msg; }
 
         connectBtn.onclick = async () => {
@@ -52,7 +93,6 @@
                     filters: [{namePrefix: 'YHK'}],
                     optionalServices: [SERVICE_UUID]
                 });
-                updateStatus("Connecting to GATT...");
                 const server = await device.gatt.connect();
                 const service = await server.getPrimaryService(SERVICE_UUID);
                 characteristic = await service.getCharacteristic(CHAR_UUID);
@@ -62,22 +102,17 @@
         };
 
         printBtn.onclick = async () => {
-            const fileInput = document.getElementById('imageInput');
-            if (!fileInput.files[0]) { updateStatus("Please select an image first!"); return; }
+            if (!sourceImage) return;
 
-            updateStatus("Processing image...");
-            const img = new Image();
-            img.src = URL.createObjectURL(fileInput.files[0]);
-            await img.decode();
-
+            updateStatus("Processing bitmap...");
             const canvas = document.getElementById('canvas');
             const ctx = canvas.getContext('2d');
             canvas.width = 384; 
-            canvas.height = Math.floor(img.height * (384 / img.width));
+            canvas.height = Math.floor(sourceImage.height * (384 / sourceImage.width));
             
             ctx.fillStyle = 'white';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            ctx.drawImage(sourceImage, 0, 0, canvas.width, canvas.height);
 
             const imageData = ctx.getImageData(0, 0, 384, canvas.height);
             const bytesPerLine = 48;
@@ -97,12 +132,12 @@
             const header = new Uint8Array([0x1D, 0x76, 0x30, 0x00, 48, 0x00, canvas.height & 0xFF, (canvas.height >> 8) & 0xFF]);
             const finalBuffer = new Uint8Array([...header, ...bitmap, 0x0A, 0x0A, 0x0A]);
 
-            updateStatus("Sending to printer...");
+            updateStatus("Streaming to printer...");
+            // Optimized loop with 10ms delay for faster transfer
             for (let i = 0; i < finalBuffer.length; i += 20) {
                 await characteristic.writeValue(finalBuffer.slice(i, i + 20));
-                // Reduced delay from 30ms to 15ms for faster throughput
-                await new Promise(r => setTimeout(r, 15));
-                updateStatus(`Streaming: ${Math.floor((i/finalBuffer.length)*100)}%`);
+                await new Promise(r => setTimeout(r, 10));
+                if (i % 200 === 0) updateStatus(`Streaming: ${Math.floor((i/finalBuffer.length)*100)}%`);
             }
             updateStatus("Done! Check your printer.");
         };
