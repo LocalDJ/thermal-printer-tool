@@ -3,71 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EasyPrint - YHK-1DBD</title>
+    <title>Thermal Printer Interface</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-50 min-h-screen font-sans text-slate-900 p-4">
-
-    <div class="max-w-md mx-auto space-y-6">
-        <div id="statusCard" class="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 text-center">
-            <div id="statusText" class="text-xs font-bold text-slate-400 uppercase tracking-widest">Printer Disconnected</div>
-        </div>
-
-        <button id="connectBtn" class="w-full bg-slate-900 text-white font-bold py-5 rounded-2xl text-lg shadow-lg active:scale-[0.98] transition-all">
-            Connect YHK-1DBD
+<body class="bg-slate-50 p-6 min-h-screen">
+    <div class="max-w-md mx-auto bg-white p-8 rounded-3xl shadow-sm border border-slate-200">
+        <h1 class="text-2xl font-bold text-slate-900 mb-2">Printer Interface</h1>
+        <p id="status" class="text-slate-500 mb-6 text-sm font-medium">Disconnected</p>
+        
+        <button id="connectBtn" class="w-full bg-slate-900 text-white font-bold py-4 rounded-2xl shadow-lg active:scale-[0.98] transition-all">
+            Connect Printer
         </button>
 
-        <div class="space-y-4">
-            <textarea id="printText" class="w-full p-5 rounded-2xl border-2 border-slate-200 h-32 focus:border-blue-500 outline-none shadow-inner bg-white text-base" placeholder="What would you like to print?"></textarea>
-            
-            <div id="imagePreviewContainer" class="hidden space-y-2 p-4 bg-white rounded-2xl border border-slate-200 shadow-sm">
-                <div class="flex justify-between items-center text-sm font-bold text-slate-500">
-                    <span>Photo Selected</span>
-                    <button id="clearImage" class="text-red-500 hover:text-red-700">Remove</button>
-                </div>
-                <img id="imgPreview" class="w-full h-32 object-contain rounded-lg bg-slate-50 border border-slate-100" />
-            </div>
+        <textarea id="printText" class="w-full mt-6 p-4 border border-slate-200 rounded-2xl h-32 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Enter text to print..."></textarea>
 
-            <div class="grid grid-cols-2 gap-4">
-                <button id="addTimestamp" class="flex items-center justify-center gap-2 p-4 bg-white rounded-2xl border border-slate-200 font-medium active:bg-blue-50">
-                    <span>🕒</span> Timestamp
-                </button>
-                <label class="flex items-center justify-center gap-2 p-4 bg-white rounded-2xl border border-slate-200 font-medium cursor-pointer active:bg-blue-50">
-                    <span>🖼️</span> Add Photo
-                    <input type="file" id="imageInput" accept="image/*" class="hidden">
-                </label>
-            </div>
-        </div>
-
-        <button id="printBtn" disabled class="w-full bg-blue-600 text-white font-bold py-6 rounded-2xl text-xl shadow-lg disabled:opacity-30 active:scale-[0.98] transition-all">
-            PRINT NOW
-        </button>
-
-        <button id="feedBtn" class="w-full bg-white text-slate-600 font-bold py-4 rounded-2xl border border-slate-200 active:bg-slate-100">
-            Feed Paper
+        <button id="printBtn" disabled class="w-full mt-4 bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg opacity-50 active:scale-[0.98] transition-all disabled:opacity-30">
+            Print Now
         </button>
     </div>
 
     <script>
         let characteristic;
-        let selectedFile = null;
-        let isTimeEnabled = false;
-
-        // Your specific printer UUIDs identified from the diagnostic
         const SERVICE_UUID = '49535343-FE7D-4AE5-8FA9-9FAFD205E455';
         const CHARACTERISTIC_UUID = '49535343-8841-43F4-A8D4-ECBE34729BB3';
 
-        const statusText = document.getElementById('statusText');
         const connectBtn = document.getElementById('connectBtn');
         const printBtn = document.getElementById('printBtn');
-        const feedBtn = document.getElementById('feedBtn');
+        const statusText = document.getElementById('status');
         const printText = document.getElementById('printText');
-        const imageInput = document.getElementById('imageInput');
 
         connectBtn.addEventListener('click', async () => {
             try {
                 const device = await navigator.bluetooth.requestDevice({
-                    filters: [{ namePrefix: 'YHK' }],
+                    filters: [{ services: [SERVICE_UUID] }],
                     optionalServices: [SERVICE_UUID]
                 });
 
@@ -75,34 +43,39 @@
                 const service = await server.getPrimaryService(SERVICE_UUID);
                 characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
                 
-                statusText.textContent = 'Printer Ready';
-                statusText.className = 'text-xs font-bold text-green-600 uppercase tracking-widest';
-                connectBtn.textContent = 'Printer Connected';
-                connectBtn.classList.replace('bg-slate-900', 'bg-green-600');
+                statusText.textContent = 'Printer Connected';
+                statusText.className = 'text-green-600 font-bold';
+                connectBtn.textContent = 'Connected';
+                connectBtn.disabled = true;
                 printBtn.disabled = false;
+                printBtn.classList.replace('opacity-50', 'opacity-100');
             } catch (err) {
-                console.error(err);
-                statusText.textContent = 'Connection Failed: ' + err.message;
+                statusText.textContent = 'Error: ' + err.message;
             }
         });
 
         printBtn.addEventListener('click', async () => {
             if (!characteristic) return;
             
-            let text = printText.value;
-            if (isTimeEnabled) text = new Date().toLocaleString() + "\n" + text;
-            
-            // Standard ESC/POS commands
             const encoder = new TextEncoder();
-            const data = encoder.encode(text + "\n\n\n");
+            const text = printText.value + "\n\n\n";
+            const textData = encoder.encode(text);
             
-            // Send in chunks if the printer buffer is small
-            await characteristic.writeValue(data);
-        });
-
-        feedBtn.addEventListener('click', async () => {
-            if (!characteristic) return;
-            await characteristic.writeValue(new Uint8Array([0x1B, 0x64, 0x03]));
+            // Construct YHK specific packet header
+            const packet = new Uint8Array(textData.length + 2);
+            packet[0] = 0x02; 
+            packet[1] = 0x00;
+            packet.set(textData, 2);
+            
+            try {
+                // Send in small chunks to accommodate BLE MTU
+                for (let i = 0; i < packet.length; i += 20) {
+                    const chunk = packet.slice(i, i + 20);
+                    await characteristic.writeValue(chunk);
+                }
+            } catch (err) {
+                console.error("Print Error:", err);
+            }
         });
     </script>
 </body>
