@@ -5,65 +5,68 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YHK-1DBD Bitmap Printer</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- We will use a simple canvas approach to force the printer into Graphics Mode -->
 </head>
 <body class="bg-slate-50 p-6 min-h-screen">
-    <div class="max-w-md mx-auto bg-white p-8 rounded-3xl shadow-sm border border-slate-200">
-        <h1 class="text-2xl font-bold text-slate-900 mb-2">Bitmap Printer</h1>
-        <p id="status" class="text-slate-500 mb-6 text-sm">Connect to print images/text</p>
-        
-        <button id="connectBtn" class="w-full bg-slate-900 text-white font-bold py-4 rounded-2xl mb-4">Connect Printer</button>
-        <textarea id="printText" class="w-full p-4 border rounded-2xl h-32 outline-none focus:ring-2" placeholder="Enter text..."></textarea>
-        <button id="printBtn" disabled class="w-full mt-4 bg-blue-600 text-white font-bold py-4 rounded-2xl opacity-50">Print as Image</button>
+    <div class="max-w-md mx-auto bg-white p-8 rounded-3xl shadow-lg border border-slate-200">
+        <h1 class="text-2xl font-bold mb-4">Printer Control</h1>
+        <button id="connectBtn" class="w-full bg-slate-900 text-white py-4 rounded-xl font-bold mb-4">Connect Printer</button>
+        <textarea id="printText" class="w-full p-4 border rounded-xl h-32 mb-4" placeholder="Enter text to print..."></textarea>
+        <button id="printBtn" class="w-full bg-blue-600 text-white py-4 rounded-xl font-bold opacity-50" disabled>Print as Bitmap</button>
+        <p id="status" class="mt-4 text-sm text-slate-400">Status: Disconnected</p>
     </div>
 
     <canvas id="canvas" class="hidden"></canvas>
 
     <script>
         let characteristic;
+        // Your confirmed UUIDs
         const SERVICE_UUID = '49535343-fe7d-4ae5-8fa9-9fafd205e455';
         const CHARACTERISTIC_UUID = '49535343-8841-43f4-a8d4-ecbe34729bb3';
 
         document.getElementById('connectBtn').addEventListener('click', async () => {
-            const device = await navigator.bluetooth.requestDevice({
-                filters: [{ name: 'YHK-1DBD' }],
-                optionalServices: [SERVICE_UUID]
-            });
-            const server = await device.gatt.connect();
-            const service = await server.getPrimaryService(SERVICE_UUID);
-            characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
-            document.getElementById('status').textContent = 'Connected!';
-            document.getElementById('printBtn').disabled = false;
-            document.getElementById('printBtn').classList.replace('opacity-50', 'opacity-100');
+            try {
+                const device = await navigator.bluetooth.requestDevice({
+                    filters: [{ name: 'YHK-1DBD' }],
+                    optionalServices: [SERVICE_UUID]
+                });
+                const server = await device.gatt.connect();
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+                
+                document.getElementById('status').textContent = 'Status: Connected';
+                document.getElementById('printBtn').disabled = false;
+                document.getElementById('printBtn').classList.replace('opacity-50', 'opacity-100');
+            } catch (err) { alert(err.message); }
         });
 
         document.getElementById('printBtn').addEventListener('click', async () => {
+            const text = document.getElementById('printText').value;
             const canvas = document.getElementById('canvas');
             const ctx = canvas.getContext('2d');
-            const text = document.getElementById('printText').value;
-            
-            // Draw text to hidden canvas
-            canvas.width = 384; // Standard 58mm printer width
-            canvas.height = 100;
-            ctx.fillStyle = 'white';
-            ctx.fillRect(0,0,384,100);
-            ctx.fillStyle = 'black';
-            ctx.font = '24px Arial';
-            ctx.fillText(text, 10, 50);
 
-            // Convert to 1-bit monochrome data
-            const imageData = ctx.getImageData(0, 0, 384, 100);
-            const buffer = new Uint8Array(384 * 100 / 8);
-            for (let i = 0; i < imageData.data.length; i += 32) {
-                let byte = 0;
-                for (let b = 0; b < 8; b++) {
-                    if (imageData.data[i + b * 4] < 128) byte |= (1 << (7 - b));
+            // Force Bit-image mode: Draw text to canvas first
+            canvas.width = 384; 
+            canvas.height = 64; 
+            ctx.fillStyle = 'white'; ctx.fillRect(0,0,384,64);
+            ctx.fillStyle = 'black'; ctx.font = '24px Arial';
+            ctx.fillText(text, 10, 40);
+
+            // Convert to 1-bit monochrome data (required for YHK printers)
+            const imgData = ctx.getImageData(0,0,384,64);
+            const buffer = new Uint8Array(384 * 64 / 8);
+            for (let i = 0; i < imgData.data.length; i += 4) {
+                if (imgData.data[i] < 128) {
+                    buffer[i / 32] |= (1 << (7 - (i / 4 % 8)));
                 }
-                buffer[i / 8] = byte;
             }
 
-            // Send to printer
-            for (let i = 0; i < buffer.length; i += 20) {
-                await characteristic.writeValue(buffer.slice(i, i + 20));
+            // Send command: [0x1B, 0x2A] is the ESC * graphic command for most thermal printers
+            const header = new Uint8Array([0x1B, 0x2A, 0x21, 0x80, 0x01]); // ESC * 33 (128, 1)
+            const payload = new Uint8Array([...header, ...buffer, 0x0A, 0x0A]);
+
+            for (let i = 0; i < payload.length; i += 20) {
+                await characteristic.writeValue(payload.slice(i, i + 20));
             }
         });
     </script>
