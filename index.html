@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EasyPrint</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .touch-target { min-height: 56px; }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-900 p-4 md:p-8">
+
+    <div class="max-w-md mx-auto space-y-6">
+        
+        <div id="statusCard" class="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 text-center transition-colors">
+            <div id="statusText" class="text-xs font-bold text-slate-400 uppercase tracking-widest">Printer Disconnected</div>
+        </div>
+
+        <button id="connectBtn" class="w-full bg-slate-900 text-white font-bold py-5 rounded-2xl text-lg shadow-lg active:scale-[0.98] transition-all touch-target">
+            Connect Printer
+        </button>
+
+        <div class="space-y-4">
+            <textarea id="printText" class="w-full p-5 rounded-2xl border-2 border-slate-200 h-32 focus:border-blue-500 outline-none shadow-inner bg-white text-base" placeholder="What would you like to print?"></textarea>
+            
+            <!-- Preview Container -->
+            <div id="imagePreviewContainer" class="hidden space-y-2 p-4 bg-white rounded-2xl border border-slate-200 shadow-sm">
+                <div class="flex justify-between items-center text-sm font-bold text-slate-500">
+                    <span>Photo Selected</span>
+                    <button id="clearImage" class="text-red-500 hover:text-red-700">Remove</button>
+                </div>
+                <img id="imgPreview" class="w-full h-32 object-contain rounded-lg bg-slate-50 border border-slate-100" />
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <button id="addTimestamp" class="touch-target flex items-center justify-center gap-2 p-4 bg-white rounded-2xl border border-slate-200 font-medium active:bg-blue-50">
+                    <span>🕒</span> Timestamp
+                </button>
+                <label class="touch-target flex items-center justify-center gap-2 p-4 bg-white rounded-2xl border border-slate-200 font-medium cursor-pointer active:bg-blue-50">
+                    <span>🖼️</span> Add Photo
+                    <input type="file" id="imageInput" accept="image/*" class="hidden">
+                </label>
+            </div>
+        </div>
+
+        <button id="printBtn" disabled class="w-full bg-blue-600 text-white font-bold py-6 rounded-2xl text-xl shadow-lg disabled:opacity-30 active:scale-[0.98] transition-all">
+            PRINT NOW
+        </button>
+
+        <button id="feedBtn" class="w-full bg-white text-slate-600 font-bold py-4 rounded-2xl border border-slate-200 active:bg-slate-100">
+            Feed Paper
+        </button>
+    </div>
+
+    <script>
+        let characteristic;
+        let selectedFile = null;
+        let isTimeEnabled = false;
+        
+        const SERVICE_UUID = '000018f0-0000-1000-8000-00805f9b34fb';
+        const CHARACTERISTIC_UUID = '00002af1-0000-1000-8000-00805f9b34fb';
+
+        const statusText = document.getElementById('statusText');
+        const connectBtn = document.getElementById('connectBtn');
+        const printBtn = document.getElementById('printBtn');
+        const feedBtn = document.getElementById('feedBtn');
+        const printText = document.getElementById('printText');
+        const timeToggle = document.getElementById('addTimestamp');
+        const imageInput = document.getElementById('imageInput');
+        const previewContainer = document.getElementById('imagePreviewContainer');
+        const imgPreview = document.getElementById('imgPreview');
+        const clearImage = document.getElementById('clearImage');
+
+        timeToggle.addEventListener('click', () => {
+            isTimeEnabled = !isTimeEnabled;
+            timeToggle.classList.toggle('bg-blue-50', isTimeEnabled);
+            timeToggle.classList.toggle('border-blue-500', isTimeEnabled);
+        });
+
+        imageInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files[0]) {
+                selectedFile = e.target.files[0];
+                imgPreview.src = URL.createObjectURL(selectedFile);
+                previewContainer.classList.remove('hidden');
+            }
+        });
+
+        clearImage.addEventListener('click', () => {
+            selectedFile = null;
+            imageInput.value = '';
+            previewContainer.classList.add('hidden');
+        });
+
+        connectBtn.addEventListener('click', async () => {
+            try {
+                const device = await navigator.bluetooth.requestDevice({
+                    filters: [{ services: [SERVICE_UUID] }]
+                });
+                const server = await device.gatt.connect();
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+                
+                statusText.textContent = 'Printer Ready';
+                statusText.className = 'text-xs font-bold text-green-600 uppercase tracking-widest';
+                connectBtn.textContent = 'Printer Connected';
+                connectBtn.classList.replace('bg-slate-900', 'bg-green-600');
+                printBtn.disabled = false;
+            } catch (err) {
+                statusText.textContent = 'Connection Failed';
+            }
+        });
+
+        async function printImage(file) {
+            const img = new Image();
+            img.src = URL.createObjectURL(file);
+            await img.decode();
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 384;
+            canvas.height = Math.floor(img.height * (384 / img.width));
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const bytes = [];
+            for (let y = 0; y < canvas.height; y++) {
+                for (let x = 0; x < canvas.width; x += 8) {
+                    let byte = 0;
+                    for (let i = 0; i < 8; i++) {
+                        const px = imageData.data[((y * canvas.width) + (x + i)) * 4];
+                        if (px < 128) byte |= (1 << (7 - i));
+                    }
+                    bytes.push(byte);
+                }
+            }
+            await characteristic.writeValue(new Uint8Array([0x1D, 0x76, 0x30, 0x00, 48, 0, canvas.height & 0xFF, (canvas.height >> 8) & 0xFF]));
+            await characteristic.writeValue(new Uint8Array(bytes));
+        }
+
+        printBtn.addEventListener('click', async () => {
+            if (selectedFile) await printImage(selectedFile);
+            
+            let text = printText.value;
+            if (isTimeEnabled) text = new Date().toLocaleString() + "\n" + text;
+            const encoder = new TextEncoder();
+            await characteristic.writeValue(encoder.encode(text + "\n\n\n"));
+        });
+
+        feedBtn.addEventListener('click', async () => {
+            await characteristic.writeValue(new Uint8Array([0x1B, 0x64, 0x03]));
+        });
+    </script>
+</body>
+</html>
