@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YHK Thermal Printer Pro</title>
+    <title>YHK Pro Controller</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-50 p-6 flex items-center justify-center min-h-screen">
@@ -27,15 +27,15 @@
                 <input type="text" id="titleInput" placeholder="Enter print title..." class="w-full px-4 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none">
             </div>
             <div class="flex items-center justify-between">
-                <span class="text-sm font-medium text-slate-600">Show Grid Overlay</span>
-                <input type="checkbox" id="gridToggle" class="w-5 h-5 accent-blue-600">
+                <span class="text-sm font-medium text-slate-600">Include Timestamp</span>
+                <input type="checkbox" id="timeToggle" class="w-5 h-5 accent-blue-600">
             </div>
         </div>
 
         <div class="mb-6">
-            <p class="text-xs font-bold text-slate-400 uppercase mb-2">Live Preview</p>
-            <div id="previewContainer" class="w-full bg-slate-100 rounded-xl overflow-hidden border border-slate-200 flex justify-center p-2">
-                <canvas id="previewCanvas" class="max-w-full h-auto"></canvas>
+            <p class="text-xs font-bold text-slate-400 uppercase mb-2">Live Print Preview</p>
+            <div id="previewContainer" class="w-full bg-slate-100 rounded-xl overflow-hidden border border-slate-200 flex justify-center p-4">
+                <canvas id="previewCanvas"></canvas>
             </div>
         </div>
 
@@ -45,8 +45,6 @@
             Status: Waiting for connection...
         </div>
     </div>
-
-    <canvas id="canvas" class="hidden"></canvas>
 
     <script>
         let characteristic;
@@ -61,35 +59,42 @@
         const previewCanvas = document.getElementById('previewCanvas');
         const imageInput = document.getElementById('imageInput');
         const titleInput = document.getElementById('titleInput');
-        const gridToggle = document.getElementById('gridToggle');
+        const timeToggle = document.getElementById('timeToggle');
 
-        let sourceImage = null;
+        let sourceImage = new Image();
 
         const updatePreview = () => {
-            if (!sourceImage) return;
+            threshVal.textContent = thresholdSlider.value;
+            if (!sourceImage.src) return;
+
             const ctx = previewCanvas.getContext('2d');
-            previewCanvas.width = 150;
-            previewCanvas.height = Math.floor(sourceImage.height * (150 / sourceImage.width)) + 30;
+            const ratio = sourceImage.height / sourceImage.width;
+            const targetWidth = 300;
+            const targetHeight = Math.floor(targetWidth * ratio) + (titleInput.value ? 40 : 0) + (timeToggle.checked ? 30 : 0);
+
+            previewCanvas.width = targetWidth;
+            previewCanvas.height = targetHeight;
             
             ctx.fillStyle = 'white';
-            ctx.fillRect(0, 0, previewCanvas.width, previewCanvas.height);
-            ctx.drawImage(sourceImage, 0, 0, 150, Math.floor(sourceImage.height * (150 / sourceImage.width)));
+            ctx.fillRect(0, 0, targetWidth, targetHeight);
             
-            // Draw title if present
+            let yOffset = 0;
             if (titleInput.value) {
                 ctx.fillStyle = 'black';
-                ctx.font = 'bold 12px sans-serif';
-                ctx.fillText(titleInput.value, 5, previewCanvas.height - 10);
+                ctx.font = 'bold 20px sans-serif';
+                ctx.fillText(titleInput.value, 10, 25);
+                yOffset += 40;
+            }
+            if (timeToggle.checked) {
+                ctx.fillStyle = '#666';
+                ctx.font = '12px sans-serif';
+                ctx.fillText(new Date().toLocaleString(), 10, yOffset + 10);
+                yOffset += 30;
             }
 
-            // Draw grid if enabled
-            if (gridToggle.checked) {
-                ctx.strokeStyle = 'rgba(0,0,255,0.2)';
-                for(let i=0; i<150; i+=20) { ctx.strokeRect(i, 0, 20, previewCanvas.height); }
-            }
+            ctx.drawImage(sourceImage, 0, yOffset, targetWidth, targetWidth * ratio);
             
-            // Apply threshold logic (simplified for preview)
-            const imageData = ctx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+            const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
             const threshold = parseInt(thresholdSlider.value);
             for (let i = 0; i < imageData.data.length; i += 4) {
                 const avg = (imageData.data[i] + imageData.data[i+1] + imageData.data[i+2]) / 3;
@@ -99,9 +104,17 @@
             ctx.putImageData(imageData, 0, 0);
         };
 
-        [imageInput, thresholdSlider, titleInput, gridToggle].forEach(el => {
-            el.addEventListener('input', updatePreview);
-        });
+        imageInput.onchange = (e) => {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                sourceImage.src = event.target.result;
+                sourceImage.onload = updatePreview;
+            };
+            reader.readAsDataURL(file);
+        };
+
+        [thresholdSlider, titleInput, timeToggle].forEach(el => el.addEventListener('input', updatePreview));
 
         function updateStatus(msg) { status.textContent = "Status: " + msg; }
 
@@ -121,44 +134,30 @@
         };
 
         printBtn.onclick = async () => {
-            if (!sourceImage) return;
-
-            updateStatus("Processing bitmap...");
-            const canvas = document.getElementById('canvas');
-            const ctx = canvas.getContext('2d');
-            canvas.width = 384; 
-            canvas.height = Math.floor(sourceImage.height * (384 / sourceImage.width));
+            updateStatus("Processing and streaming...");
+            const ctx = previewCanvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+            const width = 384;
+            const height = Math.floor(previewCanvas.height * (384 / previewCanvas.width));
             
-            ctx.fillStyle = 'white';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(sourceImage, 0, 0, canvas.width, canvas.height);
-
-            const imageData = ctx.getImageData(0, 0, 384, canvas.height);
-            const bytesPerLine = 48;
-            const bitmap = new Uint8Array(bytesPerLine * canvas.height);
-            const threshold = parseInt(thresholdSlider.value);
-
-            for (let y = 0; y < canvas.height; y++) {
-                for (let x = 0; x < 384; x++) {
-                    const i = (y * 384 + x) * 4;
-                    const brightness = (imageData.data[i] + imageData.data[i+1] + imageData.data[i+2]) / 3;
-                    if (brightness < threshold) {
-                        bitmap[y * bytesPerLine + Math.floor(x / 8)] |= (1 << (7 - (x % 8)));
+            const bitmap = new Uint8Array(Math.floor(height * (width / 8)));
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const i = (Math.floor(y * (previewCanvas.height / height)) * previewCanvas.width + Math.floor(x * (previewCanvas.width / width))) * 4;
+                    if (imageData.data[i] < 128) {
+                        bitmap[y * (width / 8) + Math.floor(x / 8)] |= (1 << (7 - (x % 8)));
                     }
                 }
             }
 
-            const header = new Uint8Array([0x1D, 0x76, 0x30, 0x00, 48, 0x00, canvas.height & 0xFF, (canvas.height >> 8) & 0xFF]);
+            const header = new Uint8Array([0x1D, 0x76, 0x30, 0x00, 48, 0x00, height & 0xFF, (height >> 8) & 0xFF]);
             const finalBuffer = new Uint8Array([...header, ...bitmap, 0x0A, 0x0A, 0x0A]);
 
-            updateStatus("Streaming to printer...");
-            // Optimized loop with 10ms delay for faster transfer
             for (let i = 0; i < finalBuffer.length; i += 20) {
                 await characteristic.writeValue(finalBuffer.slice(i, i + 20));
                 await new Promise(r => setTimeout(r, 10));
-                if (i % 200 === 0) updateStatus(`Streaming: ${Math.floor((i/finalBuffer.length)*100)}%`);
             }
-            updateStatus("Done! Check your printer.");
+            updateStatus("Print complete!");
         };
     </script>
 </body>
