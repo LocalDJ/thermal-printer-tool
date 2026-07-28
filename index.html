@@ -3,31 +3,67 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Raw Bluetooth Scanner</title>
+    <title>YHK-1DBD Bitmap Printer</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-50 p-6 flex items-center justify-center min-h-screen">
-    <div class="max-w-sm w-full bg-white p-8 rounded-3xl shadow-lg border border-slate-200">
-        <h1 class="text-xl font-bold mb-4">Raw Device Scanner</h1>
-        <button id="scanBtn" class="w-full bg-blue-600 text-white py-4 rounded-xl font-bold">
-            Scan for Devices
-        </button>
-        <div id="log" class="mt-4 text-xs text-slate-500 italic"></div>
+<body class="bg-slate-50 p-6 min-h-screen">
+    <div class="max-w-md mx-auto bg-white p-8 rounded-3xl shadow-sm border border-slate-200">
+        <h1 class="text-2xl font-bold text-slate-900 mb-2">Bitmap Printer</h1>
+        <p id="status" class="text-slate-500 mb-6 text-sm">Connect to print images/text</p>
+        
+        <button id="connectBtn" class="w-full bg-slate-900 text-white font-bold py-4 rounded-2xl mb-4">Connect Printer</button>
+        <textarea id="printText" class="w-full p-4 border rounded-2xl h-32 outline-none focus:ring-2" placeholder="Enter text..."></textarea>
+        <button id="printBtn" disabled class="w-full mt-4 bg-blue-600 text-white font-bold py-4 rounded-2xl opacity-50">Print as Image</button>
     </div>
 
+    <canvas id="canvas" class="hidden"></canvas>
+
     <script>
-        document.getElementById('scanBtn').addEventListener('click', async () => {
-            const log = document.getElementById('log');
-            log.textContent = "Opening device picker...";
-            try {
-                // Scanning for all devices, no filters
-                const device = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true,
-                    optionalServices: ['49535343-fe7d-4ae5-8fa9-9fafd205e455']
-                });
-                log.textContent = "Selected: " + device.name;
-            } catch (err) {
-                log.textContent = "Error: " + err.message;
+        let characteristic;
+        const SERVICE_UUID = '49535343-fe7d-4ae5-8fa9-9fafd205e455';
+        const CHARACTERISTIC_UUID = '49535343-8841-43f4-a8d4-ecbe34729bb3';
+
+        document.getElementById('connectBtn').addEventListener('click', async () => {
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ name: 'YHK-1DBD' }],
+                optionalServices: [SERVICE_UUID]
+            });
+            const server = await device.gatt.connect();
+            const service = await server.getPrimaryService(SERVICE_UUID);
+            characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+            document.getElementById('status').textContent = 'Connected!';
+            document.getElementById('printBtn').disabled = false;
+            document.getElementById('printBtn').classList.replace('opacity-50', 'opacity-100');
+        });
+
+        document.getElementById('printBtn').addEventListener('click', async () => {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            const text = document.getElementById('printText').value;
+            
+            // Draw text to hidden canvas
+            canvas.width = 384; // Standard 58mm printer width
+            canvas.height = 100;
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0,0,384,100);
+            ctx.fillStyle = 'black';
+            ctx.font = '24px Arial';
+            ctx.fillText(text, 10, 50);
+
+            // Convert to 1-bit monochrome data
+            const imageData = ctx.getImageData(0, 0, 384, 100);
+            const buffer = new Uint8Array(384 * 100 / 8);
+            for (let i = 0; i < imageData.data.length; i += 32) {
+                let byte = 0;
+                for (let b = 0; b < 8; b++) {
+                    if (imageData.data[i + b * 4] < 128) byte |= (1 << (7 - b));
+                }
+                buffer[i / 8] = byte;
+            }
+
+            // Send to printer
+            for (let i = 0; i < buffer.length; i += 20) {
+                await characteristic.writeValue(buffer.slice(i, i + 20));
             }
         });
     </script>
